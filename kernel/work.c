@@ -671,19 +671,31 @@ static void work_queue_main(void *workq_ptr, void *p2, void *p3)
 		__ASSERT_NO_MSG(handler != NULL);
 		handler(work);
 
-		/* Mark the work item as no longer running and deal
-		 * with any cancellation issued while it was running.
-		 * Clear the BUSY flag and optionally yield to prevent
-		 * starving other threads.
-		 */
 		key = k_spin_lock(&lock);
 
-		flag_clear(&work->flags, K_WORK_RUNNING_BIT);
-		if (flag_test(&work->flags, K_WORK_CANCELING_BIT)) {
-			finalize_cancel_locked(work);
+		/* If work is a synced work, its flag should not be
+		 * manipulated. Because after the handler is called,
+		 * thread scheduling will occur, and the function using
+		 * sync for synchronization will return. At this point,
+		 * both the calling thread and the work queue thread can
+		 * access sync. To ensure the consistency of sync, it is not
+		 * allowed for the work queue thread to modify sync anymore.
+		 */
+		if (!flag_test(&work->flags, K_WORK_SYNCED_BIT)) {
+			/* Mark the work item as no longer running and deal
+			 * with any cancellation issued while it was running.
+			 * Clear the BUSY flag and optionally yield to prevent
+			 * starving other threads.
+			 */
+
+			flag_clear(&work->flags, K_WORK_RUNNING_BIT);
+			if (flag_test(&work->flags, K_WORK_CANCELING_BIT)) {
+				finalize_cancel_locked(work);
+			}
+
+			flag_clear(&queue->flags, K_WORK_QUEUE_BUSY_BIT);
 		}
 
-		flag_clear(&queue->flags, K_WORK_QUEUE_BUSY_BIT);
 		yield = !flag_test(&queue->flags, K_WORK_QUEUE_NO_YIELD_BIT);
 		k_spin_unlock(&lock, key);
 
